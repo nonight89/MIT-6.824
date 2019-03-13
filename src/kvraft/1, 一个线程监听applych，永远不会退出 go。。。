@@ -1,0 +1,123 @@
+1, 一个线程监听applych，永远不会退出 go。。。
+2， map {
+	key : index int
+	value : channel {
+		struct op{
+			arguement
+			reply
+		}
+	}
+}
+
+client 收到别人调用他的api
+
+再搞一个函数
+	for{
+		内层的for循环可能没有发现leader
+		for{
+			尝试所有的server call rpc 获得reply （wrongleader）
+			1，server没收到（ok is false）
+				尝试下一个server
+			2，ok is true
+				wrongleader true
+					尝试下一个leader
+				wrongleader false
+					reply 返回给用户
+		}
+	}
+
+
+每一个client有自己的id
+需要标记每一个请求，通过比较身份证知道两个请求是否为同一个
+每个client自己使用的key会有前缀 
+serial ID 每次多一个请求+1（保证一次只有一个请求）
+serialID+clientID唯一标定一个请求,传给server
+
+client发起rpc调用server的函数
+server会有一个request线程执行
+	调用start函数把请求写进log里
+	1，不是leader
+		直接返回
+	2，是leader
+		请求已经被写进log了
+	3，
+	map index-result（channel）（执行请求的结果KVReply）
+	每隔100ms检查index对应的value有没有结果，如果有结果，就返回给client
+	检查结果的clientID和SerialID
+	等结果等1s，超时返回wrongleader
+	调用start函数时不行加锁
+	select
+		case index-result：
+		case time-after
+
+
+我们会在applych监听到这个请求
+run线程监听applych
+执行applymessage，对raftKV加锁
+	map string-string
+	把结果写进上上面的map里，clientId serialID
+	比较新旧serialID
+		两个serialID一样的
+	新serialID比旧serialID大1
+再搞一个map
+在raftKV有三个map
+	给每一个client储存serialID
+
+
+snapshot包含：
+	markclient
+	markrequest
+	lastincludeindex
+	lastincludeterm
+
+在raft.go里加一个函数
+getraftsize int{
+	return rf.persist.rfstate_size
+}
+
+在run线程里把reply写进channel， 检查kv.rf.getraftsize > kv.maxstatesize?snapshot:none
+new byte buffer
+new gob.encoder
+encode 两个map（raftkv自己知道的）
+在raft添加两个成员函数
+
+1) 被上层的raftkv的run调用
+
+	(rf *raft)snapshot(snapshot []byte, index int)
+	index告诉底层的的raftsnapshot到哪个index（闭集）
+	在run里面go这个snapshot函数
+
+	1.加锁，defer解锁
+	2.baseindex：当前log里第一个entry的index
+	3.判断index在不在当前的log里
+		if index <= baseindex || index > lastindex{
+			index不在当前log里
+			return（底层的raft拒绝）
+		} 
+	4.newlogs = make([]LogEntry, 0)
+		newlogs = rf.logs[lastindex:]
+		rf.logs = newlogs
+	5.call persist()
+	6.new encoder
+		encode rf.logs[0].index 
+		encode rf.logs[0].term
+		snapshot = snapshot + 上面那两
+	7.rf.persister.savesnapshot()
+
+在make里先call readpersist(), 再call readsnapshot()
+func (rf *raft )readsnapshot(snapshot []byte){
+	1. len(snapshot) == 0
+		return
+	2. new buffer
+		new decoder
+	3. 从decoder读
+		lastincludeindex int
+		lastincludeterm int
+	4.rf.committedindex = lastincludeindex
+	
+}
+
+leader在sendheartbeat调用installsnapshot
+installsnapshot 里save persist
+跟readsnapshot一样修改自己的log
+再调用一次persist
