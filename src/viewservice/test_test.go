@@ -54,6 +54,7 @@ func Test1(t *testing.T) {
 
 	for i := 0; i < DeadPings*2; i++ {
 		view, _ := ck1.Ping(0)
+		fmt.Printf("%+v", view)
 		if view.Primary == ck1.me {
 			break
 		}

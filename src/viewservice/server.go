@@ -28,13 +28,29 @@ type ViewServer struct {
 //
 func (vs *ViewServer) Ping(args *PingArgs, reply *PingReply) error {
 
+	log.Printf("[viewserver]receive a ping: %+v", args)
 	// Your code here.
 	//0. keep track by setting pingMap
 	vs.pingTrack[args.Me] = time.Now()
 
 	//1. primary acknowledge
-	if args.Me == vs.view.Primary && vs.primaryAck != args.Viewnum {
-		vs.primaryAck = args.Viewnum
+	if args.Me == vs.view.Primary {
+		if vs.primaryAck != args.Viewnum {
+			log.Printf("[viewserver]this is primary ack=%d", args.Viewnum)
+			vs.primaryAck = args.Viewnum
+		}
+
+		if args.Viewnum == 0 {
+			//primary restarted
+			temp := vs.view.Primary
+			vs.view.Primary = vs.view.Backup
+			vs.view.Backup = temp 
+			vs.view.Viewnum += 1
+			log.Printf("[viewserver]get primary Ping(0), promote backup to primary, primary: %s", vs.view.Primary)
+		}
+
+		reply.View = vs.view
+		return nil
 	}
 
 	//2. view switch
@@ -43,6 +59,7 @@ func (vs *ViewServer) Ping(args *PingArgs, reply *PingReply) error {
 		vs.view.Primary = args.Me
 		vs.view.Viewnum += 1
 		reply.View = vs.view
+		log.Printf("[viewserver]primary initialization, view: %+v", vs.view)
 		return nil
 	}
 
@@ -51,11 +68,12 @@ func (vs *ViewServer) Ping(args *PingArgs, reply *PingReply) error {
 		if vs.view.Primary != "" && vs.view.Backup == "" {
 			vs.view.Backup = args.Me
 			vs.view.Viewnum += 1
-			reply.View = vs.view
+			reply.View = vs.view	
+			log.Printf("[viewserver]backup initialization, view: %+v", vs.view)
 			return nil
 		}
-		// client crashed and restarted
-		//if args.Viewnum == 0
+
+		// client restarted
 	}
 
 	reply.View = vs.view
@@ -66,9 +84,8 @@ func (vs *ViewServer) Ping(args *PingArgs, reply *PingReply) error {
 // server Get() RPC handler.
 //
 func (vs *ViewServer) Get(args *GetArgs, reply *GetReply) error {
-
 	// Your code here.
-
+	reply.View = vs.view
 	return nil
 }
 
@@ -85,7 +102,8 @@ func (vs *ViewServer) tick() {
 		// primary liveness check
 		if vs.view.Primary != "" {
 			primaryLastPingTime := vs.pingTrack[vs.view.Primary]
-			if currentTime.Sub(primaryLastPingTime)/1000 >= PingInterval * DeadPings {
+			//log.Printf("[viewserver]tick, primary last ping: %+v", primaryLastPingTime)
+			if primaryLastPingTime.Add(PingInterval * DeadPings).Before(currentTime) {
 				vs.view.Primary = ""
 			}
 		}
@@ -93,7 +111,8 @@ func (vs *ViewServer) tick() {
 		// backup liveness check
 		if vs.view.Backup != "" {
 			backupLastPingTime := vs.pingTrack[vs.view.Backup]
-			if currentTime.Sub(backupLastPingTime)/1000 >= PingInterval * DeadPings {
+			//log.Printf("[viewserver]tick, backup last ping: %+v", backupLastPingTime)
+			if backupLastPingTime.Add(PingInterval * DeadPings).Before(currentTime) {
 				vs.view.Backup = ""
 			}
 		}
@@ -101,7 +120,9 @@ func (vs *ViewServer) tick() {
 		if vs.view.Primary == "" && vs.view.Backup != "" {
 			//promote backup to primary
 			vs.view.Primary = vs.view.Backup
+			vs.view.Backup = ""
 			vs.view.Viewnum += 1
+			log.Printf("[viewserver]tick, promote backup to primary, primary: %s", vs.view.Primary)
 		}
 
 		if vs.view.Primary == "" && vs.view.Backup == "" {
@@ -137,7 +158,7 @@ func StartServer(me string) *ViewServer {
 	vs.me = me
 	// Your vs.* initializations here.
 	vs.pingTrack = make(map[string]time.Time)
-	vs.primaryAck = 0
+	vs.primaryAck = 1024
 	vs.view = View{0, "", ""}
 
 	// tell net/rpc about our RPC server and handlers.
