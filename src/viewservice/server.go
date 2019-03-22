@@ -18,6 +18,9 @@ type ViewServer struct {
 
 
 	// Your declarations here.
+	primaryAck uint
+	pingTrack  map[string]time.Time
+	view       View
 }
 
 //
@@ -26,7 +29,36 @@ type ViewServer struct {
 func (vs *ViewServer) Ping(args *PingArgs, reply *PingReply) error {
 
 	// Your code here.
+	//0. keep track by setting pingMap
+	vs.pingTrack[args.Me] = time.Now()
 
+	//1. primary acknowledge
+	if args.Me == vs.view.Primary && vs.primaryAck != args.Viewnum {
+		vs.primaryAck = args.Viewnum
+	}
+
+	//2. view switch
+	// get first ping
+	if vs.view.Primary == "" && vs.view.Backup == "" {
+		vs.view.Primary = args.Me
+		vs.view.Viewnum += 1
+		reply.View = vs.view
+		return nil
+	}
+
+	if vs.view.Viewnum == vs.primaryAck {
+		// get first backup ping
+		if vs.view.Primary != "" && vs.view.Backup == "" {
+			vs.view.Backup = args.Me
+			vs.view.Viewnum += 1
+			reply.View = vs.view
+			return nil
+		}
+		// client crashed and restarted
+		//if args.Viewnum == 0
+	}
+
+	reply.View = vs.view
 	return nil
 }
 
@@ -47,8 +79,35 @@ func (vs *ViewServer) Get(args *GetArgs, reply *GetReply) error {
 // accordingly.
 //
 func (vs *ViewServer) tick() {
-
 	// Your code here.
+	if vs.view.Viewnum == vs.primaryAck {
+		currentTime := time.Now()
+		// primary liveness check
+		if vs.view.Primary != "" {
+			primaryLastPingTime := vs.pingTrack[vs.view.Primary]
+			if currentTime.Sub(primaryLastPingTime)/1000 >= PingInterval * DeadPings {
+				vs.view.Primary = ""
+			}
+		}
+
+		// backup liveness check
+		if vs.view.Backup != "" {
+			backupLastPingTime := vs.pingTrack[vs.view.Backup]
+			if currentTime.Sub(backupLastPingTime)/1000 >= PingInterval * DeadPings {
+				vs.view.Backup = ""
+			}
+		}
+
+		if vs.view.Primary == "" && vs.view.Backup != "" {
+			//promote backup to primary
+			vs.view.Primary = vs.view.Backup
+			vs.view.Viewnum += 1
+		}
+
+		if vs.view.Primary == "" && vs.view.Backup == "" {
+			vs.view.Viewnum += 1
+		}
+	}
 }
 
 //
@@ -77,6 +136,9 @@ func StartServer(me string) *ViewServer {
 	vs := new(ViewServer)
 	vs.me = me
 	// Your vs.* initializations here.
+	vs.pingTrack = make(map[string]time.Time)
+	vs.primaryAck = 0
+	vs.view = View{0, "", ""}
 
 	// tell net/rpc about our RPC server and handlers.
 	rpcs := rpc.NewServer()
