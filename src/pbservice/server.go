@@ -37,7 +37,6 @@ func (pb *PBServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) error 
 
 	// Your code here.
 
-
 	return nil
 }
 
