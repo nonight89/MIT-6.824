@@ -6,11 +6,14 @@ import "fmt"
 
 import "crypto/rand"
 import "math/big"
+import "time"
+import "log"
 
 
 type Clerk struct {
 	vs *viewservice.Clerk
 	// Your declarations here
+	primary string
 }
 
 // this may come in handy.
@@ -25,7 +28,7 @@ func MakeClerk(vshost string, me string) *Clerk {
 	ck := new(Clerk)
 	ck.vs = viewservice.MakeClerk(me, vshost)
 	// Your ck.* initializations here
-
+	ck.primary = ck.vs.Primary()
 	return ck
 }
 
@@ -74,8 +77,29 @@ func call(srv string, rpcname string,
 func (ck *Clerk) Get(key string) string {
 
 	// Your code here.
+	args := &GetArgs{}
+	args.Key = key
+	var reply GetReply
 
-	return "???"
+	var result bool = false
+	for !result {
+		ok := call(ck.primary, "PBServer.Get", args, &reply)
+		if ok == true {
+			if reply.Err == ErrWrongServer {
+				ck.primary = ck.vs.Primary()
+				log.Printf("[Client]Get receives ErrWrongServer! New primary: %s", ck.primary)
+				time.Sleep(viewservice.PingInterval)
+			} else {
+				result = true
+			}
+		} else {
+			ck.primary = ck.vs.Primary()
+				log.Printf("[Client]Get call excption! New primary: %s", ck.primary)
+				time.Sleep(viewservice.PingInterval)
+		}
+	}
+
+	return reply.Value
 }
 
 //
@@ -84,6 +108,33 @@ func (ck *Clerk) Get(key string) string {
 func (ck *Clerk) PutAppend(key string, value string, op string) {
 
 	// Your code here.
+	args := &PutAppendArgs{}
+	args.Key = key
+	args.Value = value
+	args.Xid = nrand()
+	args.Op = op
+
+	var reply PutAppendReply
+
+	var result bool = false
+	for !result {
+		ok := call(ck.primary, "PBServer.PutAppend", args, &reply)
+
+		if ok == true {
+			if reply.Err == ErrWrongServer || reply.Err == ErrReplica {
+				ck.primary = ck.vs.Primary()
+				log.Printf("[Client]PutAppend receives %s! New primary: %s", reply.Err, ck.primary)
+				time.Sleep(viewservice.PingInterval)
+			} else {
+				result = true
+			}
+		} else {
+			ck.primary = ck.vs.Primary()
+			log.Printf("[Client]PutAppend call excption! New primary: %s", ck.primary)
+			time.Sleep(viewservice.PingInterval)
+		}
+	}
+
 }
 
 //
