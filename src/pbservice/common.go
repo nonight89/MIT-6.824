@@ -4,6 +4,7 @@ const (
 	OK             = "OK"
 	ErrNoKey       = "ErrNoKey"
 	ErrWrongServer = "ErrWrongServer"
+	ErrReplica     = "ErrReplica"
 )
 
 type Err string
@@ -13,7 +14,8 @@ type PutAppendArgs struct {
 	Key   string
 	Value string
 	// You'll have to add definitions here.
-
+	Xid   int64 // for checking idempotent
+	Op    string //for indicating operation type
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
 }
@@ -34,3 +36,23 @@ type GetReply struct {
 
 
 // Your RPC definitions here.
+type ForwardArgs struct {
+	Key   string
+	Value string
+	Xid   int64
+}
+
+type ForwardReply struct {
+	Err Err
+}
+
+type GetReplicaArgs struct {
+	srv string
+}
+
+type GetReplicaReply struct {
+	Data map[string]string
+	Dup  map[string]string
+	Err  Err
+}
+

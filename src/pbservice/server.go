@@ -13,7 +13,6 @@ import "syscall"
 import "math/rand"
 
 
-
 type PBServer struct {
 	mu         sync.Mutex
 	l          net.Listener
@@ -22,12 +21,48 @@ type PBServer struct {
 	me         string
 	vs         *viewservice.Clerk
 	// Your declarations here.
+	curView    View
+	data       map[string]string
+	dup        map[int64]string
 }
 
+func (pb *PBServer) Forward(args *ForwardArgs, reply *ForwardReply) error {
+	if curView.Backup == me {
+		data[args.Key] = args.Value
+		dup[args.Xid] = OK
+		reply.Err = OK
+	} else {
+		reply.Err = ErrWrongServer
+	}
+	return nil
+}
+
+func (pb *PBServer) GetReplica(args *GetReplicaArgs, reply *GetReplicaArgs) error {
+	if curView.Primary == me && curView.Backup == args.serv {
+		reply.Data = pb.data
+		reply.Dup = pb.dup
+		reply.Err = OK
+	} else {
+		reply.Err = ErrWrongServer
+	}
+
+	return nil
+}
 
 func (pb *PBServer) Get(args *GetArgs, reply *GetReply) error {
 
 	// Your code here.
+	if pb.curView.Primary == pb.me {
+		if pb.data[args.Key] == nil {
+			reply.Err = ErrNoKey
+			reply.Value = ""
+		} else {
+			replu.Err = OK
+			reply.Value = pb.data[args.Key]
+		}
+	} else {
+		reply.Err = ErrWrongServer
+	}
 
 	return nil
 }
@@ -36,7 +71,42 @@ func (pb *PBServer) Get(args *GetArgs, reply *GetReply) error {
 func (pb *PBServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) error {
 
 	// Your code here.
+	if pb.curView.Primary = pb.me {
+		if dup[args.Xid] == nil {
+			// 1. get the final value of args.Key
+			var val string
+			if args.Op == "Put" {
+				val = args.Value
+			} else if args.Op == "Append"{
+				if data[args.Key] == nil {
+					val = args.Value
+				} else {
+					val = data[args.Key] + args.Value
+				}
+			}
+			// 2. forward final key/value to backup
+			forwardArgs = &ForwardArgs{}
+			forwardArgs.Key = args.Key
+			forwardArgs.Value = val
+			forwardArgs.Xid = args.Xid
+			var forwardReply = ForwardReply
 
+			ok := call(pb.curView.Backup, "PBServer.Forward", forwardArgs, &forwardArgs)
+
+			// 3. store key/value on primary and insert xid to dup
+			if ok && forwardArgs.Err = OK{
+				data[args.Key] = val
+				dup[args.Xid] = OK
+				reply.Err = dup[args.Xid]
+			} else {
+				reply.Err = ErrReplica
+			}
+		} else {
+			relpy.Err = dup[args.Xid]
+		}
+	} else {
+		reply.Err = ErrWrongServer
+	}
 
 	return nil
 }
@@ -51,6 +121,27 @@ func (pb *PBServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) error 
 func (pb *PBServer) tick() {
 
 	// Your code here.
+	view, _ = vs.Ping(pb.curView.Viewnum)
+
+	if view.Viewnum != pb.curView.Viewnum {
+		if pb.curView.Backup = pb.me && view.Primary == pb.me {
+			//TODO full replication from primary
+			getReplicaArgs = &GetReplicaArgs{}
+			getReplicaArgs.serv = pb.me
+			var getReplicaReply = GetReplicaReply
+
+			ok := call(view.Primary, "PBServer.GetReplica", getReplicaArgs, &getReplicaReply)
+
+			if ok == true && getReplicaReply.Err == OK{
+				vs.data = getReplicaReply.Data
+				vs.Dup = getreplicaReply.Dup
+				pb.curView = view
+			}
+		} else {
+			pb.curView = view
+		}
+	}
+
 }
 
 // tell the server to shut itself down.
@@ -84,6 +175,9 @@ func StartServer(vshost string, me string) *PBServer {
 	pb.me = me
 	pb.vs = viewservice.MakeClerk(me, vshost)
 	// Your pb.* initializations here.
+	pb.curView := View{0, "", ""}
+	pb.data := make(map[string]string)
+	pb.dup := make(map[int64]string)
 
 	rpcs := rpc.NewServer()
 	rpcs.Register(pb)
