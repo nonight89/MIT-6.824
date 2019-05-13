@@ -28,55 +28,48 @@ type ViewServer struct {
 //
 func (vs *ViewServer) Ping(args *PingArgs, reply *PingReply) error {
 
-	log.Printf("[viewserver]receive a ping: %+v", args)
+	vs.mu.Lock()
+	log.Printf("[viewserver]%+v PING, vs state: vs.view=%+v, vs.primaryAck=%d", args, vs.view, vs.primaryAck)
 	// Your code here.
+
 	//0. keep track by setting pingMap
-	vs.pingTrack[args.Me] = time.Now()
-
-	//1. primary acknowledge
-	if args.Me == vs.view.Primary {
-		if vs.primaryAck != args.Viewnum {
-			log.Printf("[viewserver]this is primary ack=%d", args.Viewnum)
-			vs.primaryAck = args.Viewnum
-		}
-
-		if args.Viewnum == 0 {
-			//primary restarted
-			temp := vs.view.Primary
-			vs.view.Primary = vs.view.Backup
-			vs.view.Backup = temp 
-			vs.view.Viewnum += 1
-			log.Printf("[viewserver]get primary Ping(0), promote backup to primary, primary: %s", vs.view.Primary)
-		}
-
-		reply.View = vs.view
-		return nil
+	// if primary viewnum lag behind more than 1 with viewserver, we consider the priamry is dead
+	if !(vs.view.Primary == args.Me && vs.view.Viewnum > args.Viewnum + 1) {
+		vs.pingTrack[args.Me] = time.Now()
 	}
-
-	//2. view switch
-	// get first ping
+	
 	if vs.view.Primary == "" && vs.view.Backup == "" {
-		vs.view.Primary = args.Me
-		vs.view.Viewnum += 1
-		reply.View = vs.view
-		log.Printf("[viewserver]primary initialization, view: %+v", vs.view)
-		return nil
-	}
-
-	if vs.view.Viewnum == vs.primaryAck {
-		// get first backup ping
-		if vs.view.Primary != "" && vs.view.Backup == "" {
+		// Should prevent uninitialized server to be primary
+		// When primary crashes while there is no backup, we must reboot primary to recovery the service
+		// When primary crashes while backup crashes simultaneously, we can recovery the service through both primary and backup 
+		if vs.view.Viewnum == 0 && vs.view.Viewnum == vs.primaryAck {
+			vs.view.Primary = args.Me
+			vs.view.Viewnum += 1
+			log.Printf("[viewserver]add primary %s, reply=%+v", args.Me, vs.view)
+		}
+	} else if vs.view.Primary != "" && vs.view.Backup == "" {
+		if vs.view.Primary == args.Me {
+			//primary acknowledge
+			if vs.primaryAck == args.Viewnum - 1 {
+				vs.primaryAck = args.Viewnum
+				log.Printf("[viewserver]Primary %s ack %d",args.Me, vs.primaryAck)
+			}
+		} else if vs.view.Viewnum == vs.primaryAck {
+			//Add Backup 
 			vs.view.Backup = args.Me
 			vs.view.Viewnum += 1
-			reply.View = vs.view	
-			log.Printf("[viewserver]backup initialization, view: %+v", vs.view)
-			return nil
 		}
-
-		// client restarted
+	} else if vs.view.Primary != "" && vs.view.Backup != "" {
+		if vs.view.Primary == args.Me {
+			//primary acknowledge
+			if vs.primaryAck == args.Viewnum - 1 {
+				vs.primaryAck = args.Viewnum
+				log.Printf("[viewserver]Primary %s ack %d",args.Me, vs.primaryAck)
+			}
+		}
 	}
-
 	reply.View = vs.view
+	vs.mu.Unlock()
 	return nil
 }
 
@@ -97,6 +90,7 @@ func (vs *ViewServer) Get(args *GetArgs, reply *GetReply) error {
 //
 func (vs *ViewServer) tick() {
 	// Your code here.
+	vs.mu.Lock()
 	if vs.view.Viewnum == vs.primaryAck {
 		currentTime := time.Now()
 		// primary liveness check
@@ -124,11 +118,8 @@ func (vs *ViewServer) tick() {
 			vs.view.Viewnum += 1
 			log.Printf("[viewserver]tick, promote backup to primary, primary: %s", vs.view.Primary)
 		}
-
-		if vs.view.Primary == "" && vs.view.Backup == "" {
-			vs.view.Viewnum += 1
-		}
 	}
+	vs.mu.Unlock()
 }
 
 //
@@ -158,7 +149,7 @@ func StartServer(me string) *ViewServer {
 	vs.me = me
 	// Your vs.* initializations here.
 	vs.pingTrack = make(map[string]time.Time)
-	vs.primaryAck = 1024
+	vs.primaryAck = 0
 	vs.view = View{0, "", ""}
 
 	// tell net/rpc about our RPC server and handlers.

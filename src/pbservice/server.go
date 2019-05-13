@@ -136,7 +136,7 @@ func (pb *PBServer) tick() {
 
 	// Your code here.
 	view, _ := pb.vs.Ping(pb.curView.Viewnum)
-	pb.mu.Lock()
+	//pb.mu.Lock()
 	if view.Viewnum != pb.curView.Viewnum {
 		if pb.me == view.Backup {
 			//TODO full replication from primary
@@ -148,8 +148,10 @@ func (pb *PBServer) tick() {
 
 			if ok == true && getReplicaReply.Err == OK{
 				log.Printf("[Server:%s]tick copy primary data completely", pb.me)
+				pb.mu.Lock()
 				pb.data = getReplicaReply.Data
 				pb.dup = getReplicaReply.Dup
+				pb.mu.Unlock()
 				pb.curView = view
 			} else {
 				log.Printf("[Server:%s]GetReplica Failure", pb.me)
@@ -158,7 +160,7 @@ func (pb *PBServer) tick() {
 			pb.curView = view
 		}
 	}
-	pb.mu.Unlock()
+	//pb.mu.Unlock()
 }
 
 // tell the server to shut itself down.
